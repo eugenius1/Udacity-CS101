@@ -71,27 +71,28 @@ Robin likes to play Call of Arms, Dwarves and Swords.\
 Freda is connected to Olive, John, Debra.\
 Freda likes to play Starfleet Commander, Ninja Hamsters, Seahorse Adventures."
 
+remove_primary_from_secondary = True
+remove_self_from_secondary = True
+
 #------------------------------------------------------------------------------
-
-str_conns = " is connected to "
-str_games = " likes to play "
-
-# len_conns = len(str_conns)
-# len_games = len(str_games)
-
+# conj stands for conjugation
 
 class ParsedInfo(object):
-	"""docstring for ParsedInfo"""
+	"""abstract class for Parsed Information sentence"""
 	def __init__(self, conj_start=-1):
 		super(ParsedInfo, self).__init__()
 		self.conj_start = conj_start
 		self.info = None
 
+	def __str__(self):
+		return self.__repr__()
+
 	def __repr__(self):
-		return str(self.info)
+		return str(self.__class__.__name__) + '(' + \
+			str(self.conj_start) + ', ' + str(self.info) + ')'
 
 class ParsedConns(ParsedInfo):
-	"""docstring for ParsedConns"""
+	"""Parsed Connections sentence"""
 	conj_str = " is connected to "
 	conj_len = len(conj_str)
 
@@ -100,7 +101,7 @@ class ParsedConns(ParsedInfo):
 				
 		
 class ParsedGames(ParsedInfo):
-	"""docstring for ParsedGames"""
+	"""Parsed Games sentence"""
 	conj_str = " likes to play "
 	conj_len = len(conj_str)
 
@@ -109,7 +110,7 @@ class ParsedGames(ParsedInfo):
 
 # Used in network
 class UserInfo(object):
-	"""docstring for UserInfo"""
+	"""Information for individual network users"""
 	def __init__(self, games=[], connections=[]):
 		super(UserInfo, self).__init__()
 		self.games = games
@@ -119,10 +120,9 @@ class UserInfo(object):
 		return self.__repr__()
 
 	def __repr__(self):
-		return '(connections=' + str(self.connections) + ', '+ \
+		return str(self.__class__.__name__) + \
+		'(connections=' + str(self.connections) + ', '+ \
 		'games=' + str(self.games) + ')'
-		
-		
 		
 
 # ----------------------------------------------------------------------------- 
@@ -148,57 +148,60 @@ class UserInfo(object):
 #   The newly created network data structure
 def create_data_structure(string_input):
 	network = {}
-	parse_and_add(network, string_input)
-	return network
 
-def parse_and_add(network, string_input):
 	def next_conjugation():
 		conj_conns = string_input.find(ParsedConns.conj_str)
 		conj_games = string_input.find(ParsedGames.conj_str)
 		
+		# Return type indicates conjugation/info type
 		if (conj_conns == -1) or (conj_games < conj_conns):
 			# -1 can also be returned
-			return ParsedGames(conj_games)
+			return ParsedGames(conj_start=conj_games)
 
 		else:
-			return ParsedConns(conj_conns)
+			return ParsedConns(conj_start=conj_conns)
 
 	while 1:
-		parsed_info = next_conjugation()
-		conj = parsed_info.conj_start
+		parsed = next_conjugation() # some subclass of ParsedInfo
+		conj = parsed.conj_start
 		if conj == -1:
 			break
 
 		end = string_input.find(".")
 
-		parsed_info.user = string_input[:conj]
-		parsed_info.info = string_input[(conj+parsed_info.conj_len) : end]
-		parsed_info.info = parsed_info.info.split(', ')
-		#if isinstance(parsed_info, ParsedConns):
-			#print parsed_info.info
+		parsed.user = string_input[:conj]
+		parsed.info = string_input[(conj+parsed.conj_len) : end] # string
+		parsed.info = parsed.info.split(', ') # list of strings
 
-		add_parsed_info(network, parsed_info)
+		add_parsed_info(network, parsed)
 
 		if end == -1:
 			break
-		conj = next_conjugation()
 		string_input = string_input[end+1:]
 
-	#return user, info
+	return network
 
-def add_parsed_info(network, parsed_info):
-	if isinstance(parsed_info, ParsedConns):
+def add_parsed_info(network, parsed):
+	if isinstance(parsed, ParsedConns):
 		try:
-			network[parsed_info.user].connections = parsed_info.info
+			# user already added to network
+			network[parsed.user].connections = parsed.info
 		except KeyError:
-			network[parsed_info.user] = UserInfo(connections=parsed_info.info)
+			# new user to network
+			network[parsed.user] = UserInfo(connections=parsed.info)
 
-	if isinstance(parsed_info, ParsedGames):
+	if isinstance(parsed, ParsedGames):
 		try:
-			network[parsed_info.user].games = parsed_info.info
+			network[parsed.user].games = parsed.info
 		except KeyError:
-			network[parsed_info.user] = UserInfo(games=parsed_info.info)
+			network[parsed.user] = UserInfo(games=parsed.info)
 	
+#------------------------------------------------------------------------------
+def a_user_not_in_network(network, users):
+	for u in users:
+		if u not in network:
+			return True
+	return False
 
 # ----------------------------------------------------------------------------- # 
 # Note that the first argument to all procedures below is 'network' This is the #
@@ -258,10 +261,12 @@ def get_games_liked(network, user):
 #   - If a connection already exists from user_A to user_B, return network unchanged.
 #   - If user_A or user_B is not in network, return False.
 def add_connection(network, user_A, user_B):
-	if user_B or user_A not in network:
+	if (user_A not in network) or (user_B not in network):
 		return False
+
 	if user_B not in get_connections(network, user_A):
 		network[user_A].connections.append(user_B)
+
 	return network
 
 # ----------------------------------------------------------------------------- 
@@ -306,7 +311,24 @@ def add_new_user(network, user, games):
 #   himself/herself. It is also OK if the list contains a user's primary 
 #   connection that is a secondary connection as well.
 def get_secondary_connections(network, user):
-	return []
+	if user not in network:
+		return None
+	
+	primary = get_connections(network, user)
+	secondary = set([])
+
+	for p in primary:
+		secondary = secondary.union(set(get_connections(network, p)))
+
+	if remove_primary_from_secondary:
+		secondary = secondary.difference(primary)
+	if remove_self_from_secondary:
+		try:
+			secondary.remove(user)
+		except KeyError:
+			pass
+
+	return list(secondary)
 
 # ----------------------------------------------------------------------------- 	
 # count_common_connections(network, user_A, user_B): 
@@ -321,7 +343,17 @@ def get_secondary_connections(network, user):
 #   The number of connections in common (as an integer).
 #   - If user_A or user_B is not in network, return False.
 def count_common_connections(network, user_A, user_B):
-	return 0
+	if (user_A not in network) or (user_B not in network):
+		return False
+	connections_A = get_connections(network, user_A)
+	connections_B = get_connections(network, user_B)
+
+	tally = 0
+	for u in connections_A:
+		if u in connections_B:
+			tally += 1
+
+	return tally
 
 # ----------------------------------------------------------------------------- 
 # find_path_to_friend(network, user_A, user_B): 
@@ -356,8 +388,37 @@ def count_common_connections(network, user_A, user_B):
 #   may safely add default parameters since all calls used in the grading script 
 #   will only include the arguments network, user_A, and user_B.
 def find_path_to_friend(network, user_A, user_B):
+	if (user_A not in network) or (user_B not in network):
+		return False
 	# your RECURSIVE solution here!
-	return None
+
+	def recurse_find(current_level, visited):
+		# types: list of lists (paths), set of strings (users)
+
+		# check current depth
+		# last node is path[-1]
+		for path in current_level:
+			if path[-1] == user_B:
+				return path
+		
+		next_level = []
+		visited = visited.union(set([path[-1] for path in current_level]))
+
+		for path in current_level:
+			# potential next-level
+			to_add = get_connections(network, path[-1])
+			for nlu in to_add: # next-level user
+				if nlu not in visited:
+					next_level.append(path + [nlu])
+
+		if next_level:
+			return recurse_find(next_level, visited)
+		else:
+			# all leads have been exhausted, no solution
+			return None
+	
+	return recurse_find([[user_A]], set([]))
+
 
 # Make-Your-Own-Procedure (MYOP)
 # ----------------------------------------------------------------------------- 
@@ -369,20 +430,28 @@ def find_path_to_friend(network, user_A, user_B):
 # Replace this with your own procedure! You can also uncomment the lines below
 # to see how your code behaves. Have fun!
 
+
+net = create_data_structure("")
 net = create_data_structure(example_input)
 print net
+
 print get_connections(net, "Debra")
 print get_connections(net, "Mercedes")
 print get_games_liked(net, "John")
-print add_connection(net, "John", "Freda")
+
+add_connection(net, "John", "Freda")
+print "Freda" in get_connections(net, "John")
 
 before = net["Debra"]
-print add_new_user(net, "Debra", [])
+add_new_user(net, "Debra", [])
 print net["Debra"] == before
 
-print add_new_user(net, "Nick", ["Seven Schemers", "The Movie: The Game"]) # True
+add_new_user(net, "Nick", ["Seven Schemers", "The Movie: The Game"]) # True
 print net["Nick"]
 
-#print get_secondary_connections(net, "Mercedes")
-#print count_common_connections(net, "Mercedes", "John")
-#print find_path_to_friend(net, "John", "Ollie")
+print get_secondary_connections(net, "Mercedes")
+print count_common_connections(net, "Mercedes", "John")
+print find_path_to_friend(net, "John", "Ollie")
+print find_path_to_friend(net, "Ollie", "John")
+print find_path_to_friend(net, "John", "Nick")
+print find_path_to_friend(net, "Nick", "Ollie")
